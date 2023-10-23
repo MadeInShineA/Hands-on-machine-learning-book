@@ -6,6 +6,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedShuffleSplit
+from pandas.plotting import scatter_matrix
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import FunctionTransformer
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.cluster import KMeans
 
 
 def load_housing_data():
@@ -33,6 +43,26 @@ def stratified_split_test_train(n_splits, test_size, data, stratified_by):
     for train_index, test_index in splitter.split(data, data[stratified_by]):
         stratified_splits.append((data.loc[train_index], data.loc[test_index]))
     return stratified_splits
+
+# Defining a custom transformer that computes Kmean clustering inside its fit method and a rbf_kernel inside its transform method
+
+
+class ClusterSimilarity(BaseEstimator, TransformerMixin):
+    def __init__(self, n_clusters=10, gamma=0.1, random_state=None):
+        self.n_clusters = n_clusters
+        self.gamma = gamma
+        self.random_state = random_state
+
+    def fit(self, X, y=None, sample_weight=None):
+        self.kmeans = KMeans(self.n_clusters, random_state=self.random_state)
+        self.kmeans.fit(X, sample_weight=sample_weight)
+        return self
+
+    def transform(self ,X):
+        return rbf_kernel(X, self.kmeans.cluster_centers_, gamma=self.gamma)
+
+    def get_feature_names_out(self, names=None):
+        return [f"Cluster {i} similarity" for i in range(self.n_clusters)]
 
 
 if __name__ == '__main__':
@@ -73,7 +103,6 @@ if __name__ == '__main__':
     for set_ in (stratified_train_set, stratified_test_set):
         set_.drop("income_cat", axis=1, inplace=True)
 
-
     original_stratified_train_set = stratified_train_set.copy()
 
     # Visualizing the data with the longitude and latitude attributes
@@ -88,5 +117,72 @@ if __name__ == '__main__':
 
     # Looking for correlations
     print("*** Looking for correlations ***\n")
-    correlation_matrix = housing_data.corr()
+
+    print("\n* Default correlation matrix for the median house attribute *\n")
+    correlation_matrix = housing_data.corr(numeric_only=True)
     print(correlation_matrix["median_house_value"].sort_values(ascending=False))
+
+    correlation_attributes = ["median_house_value", "median_income", "total_rooms", "housing_median_age"]
+    scatter_matrix(housing_data[correlation_attributes], figsize=(12, 8))
+    plt.show()
+
+    # The most promising attribute to predict the median house value seems to be the median income
+    # Let's make its plot bigger
+
+    housing_data.plot(kind="scatter", x="median_income", y="median_house_value", alpha=0.1, grid=True)
+    plt.show()
+
+    # Creating attributes to gain more insight on the data
+    housing_data["rooms_per_house"] = housing_data["total_rooms"] / housing_data["households"]
+    housing_data["bedrooms_ratio"] = housing_data["total_bedrooms"] / housing_data["total_rooms"]
+    housing_data["people_per_house"] = housing_data["population"] / housing_data["households"]
+
+    print("\n*** Correlation matrix for the median house value with newly created attributes ***\n")
+    correlation_matrix = housing_data.corr(numeric_only=True)
+    print(correlation_matrix["median_house_value"].sort_values(ascending=False))
+
+    housing_data = stratified_train_set.drop("median_house_value", axis=1)
+    housing_labels = stratified_train_set["median_house_value"].copy()
+
+    # Modify the dataset to include the median of total_bedrooms when the attribute is empty
+    median = housing_data["total_bedrooms"].median()
+    housing_data["total_bedrooms"].fillna(median, inplace=True)
+
+    # Using the SimpleImputer to fill the missing values inside the dataset
+    imputer = SimpleImputer(strategy="median")
+
+    # Retrieving only the numerical attributes of the dataset
+    housing_num = housing_data.select_dtypes(include=[np.number])
+    imputer.fit(housing_num)
+
+    # Transforming the ocean_proximity attribute to a numerical attribute using OrdinalEncoder
+    ordinal_encoder = OrdinalEncoder()
+    housing_cat_encoded = ordinal_encoder.fit_transform(housing_data[["ocean_proximity"]])
+
+    # Transforming the ocean_proximity attribute to a numerical attribute using OneHotEncoder
+    one_hot_encoder = OneHotEncoder()
+    one_hot_encoder.handle_unknown = 'ignore'
+    housing_cat_1hot = one_hot_encoder.fit_transform(housing_data[["ocean_proximity"]])
+
+    # Transforming the numerical attributes to a range between 0 and 1 using MinMaxScaler
+    min_max_scaler = MinMaxScaler()
+    housing_num_min_max_scaled = min_max_scaler.fit_transform(housing_num)
+
+    # Transforming the numerical attributes to a standard normal distribution using StandardScaler
+    standard_scaler = StandardScaler()
+    housing_num_standard_scaled = standard_scaler.fit_transform(housing_num)
+
+    age_simil_35 = rbf_kernel(housing_data["housing_median_age"].values.reshape(-1, 1), [[35]], gamma=0.1)
+
+    # Creating a custom transformer to compute the log values of the numerical attributes
+    log_transformer = FunctionTransformer(np.log, inverse_func=np.exp)
+    log_population = log_transformer.fit_transform(housing_data["population"])
+
+
+
+
+
+
+
+    
+
